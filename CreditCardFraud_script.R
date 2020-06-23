@@ -41,7 +41,9 @@ suppressMessages(if (!require(data.table)) {
 
 
 # download data
-creditcard <- fread("C:\\Users\\morit\\Downloads\\310_23498_bundle_archive\\creditcard.csv", header = TRUE, sep = ",", dec = ".")
+dl <- tempfile() 
+download.file("https://www.openml.org/data/get_csv/1673544/phpKo8OWT", dl)
+creditcard <- data.table::fread(dl, header = TRUE, sep = ",", dec = ".")
 creditcard$Class <- factor(creditcard$Class, labels = c( "0" = "Legitimate", "1" = "Fraud"))
 
 
@@ -543,46 +545,40 @@ do_ROC(ROC_caret)
 
 
 ### ------------------------------------------------------------------------------------------------------------------------
-### Which Model to Take
-### ------------------------------------------------------------------------------------------------------------------------
-stop("Work under Progress")
-do_ROC(ROC_caret) + coord_cartesian(xlim = c(0, 0.005))
-
-
-
-
-
-
-
-
-
-
-### ------------------------------------------------------------------------------------------------------------------------
-### Outdated Code Snippets
+### Final Evaluation
 ### ------------------------------------------------------------------------------------------------------------------------
 
-### testing GBM
-data_train_under2 <- data_train_under %>% mutate(Class = as.numeric(Class)-1)
-
-rafalib::mypar(2,4)
-for (i in c(5, 7)) {
-  for (j in c(13, 17, 21, 25) ){
-    tmp_gbm <- gbm::gbm(Class ~ ., distribution = "bernoulli", data = data_train_under2,
-                        n.trees = 5/0.001,
-                        interaction.depth = i,
-                        n.minobsinnode = j,
-                        shrinkage = 0.001,
-                        bag.fraction = 0.5,
-                        train.fraction = 0.75)
-    gbm::gbm.perf(tmp_gbm, method = "test")
-    title(paste0("Treedepth = ", i, ", MinObs = ", j, ",\nBest =", round(min(tmp_gbm$valid.error),3)))
+suppressWarnings(set.seed(10101, sample.kind = "Rounding"))
+# 25 bootstrap samples
+for (i in c(1:25)){
+  # create bootstrap sample
+  BT_index <- sample(c(1:nrow(data_validation)), nrow(data_validation), replace = TRUE)
+  BT_data <- data_validation[BT_index,]
+  # predict outcome for this sample with the RF created above
+  p_Fraud <- predict(fit_RF, newdata = BT_data, type = "prob")[,2]
+  # do evaluation of prediction
+  ps = seq(0,1, by = 0.001)
+  tmp <- map_df(ps, function(p){
+    y_hat <- ifelse(p_Fraud <= p, "Legitimate", "Fraud") %>% 
+      factor(levels = levels(data_train$Class))
+    SS <- caret::confusionMatrix(y_hat, BT_data$Class, 
+                                 positive = "Fraud")$byClass[c("Sensitivity", "Specificity", "F1")]
+    AC <- caret::confusionMatrix(y_hat, BT_data$Class, 
+                                 positive = "Fraud")$overall["Accuracy"]
+    list(method = paste0("Bootstrap Sample ", i), cutoff = p, sensitivity = SS[1], 
+         specificity = SS[2], F1 = SS[3], accuracy = AC[1])
+  })
+  # save the evaluation
+  if (i == 1){
+    BT_results <- tmp
+  }
+  if (i != 1){
+    BT_results <- rbind(BT_results, tmp)
+    tmp <- NULL
   }
 }
 
 
-
-### ------------------------------------------------------------------------------------------------------------------------
-### To Do
-### ------------------------------------------------------------------------------------------------------------------------
-
-# automatically download data
+# plot the results
+do_ROC(BT_results) + theme(legend.position = "none") + coord_equal() +
+  ggtitle("Performance Estimation Fluctuation", subtitle = "25 bootstrap samples")
