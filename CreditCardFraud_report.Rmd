@@ -17,9 +17,9 @@ lof: false
 output:
   pdf_document:
     df_print: kable
-    highlight: pygments
     toc: yes
     number_sections: false
+
 
 
 ---
@@ -65,11 +65,11 @@ suppressMessages(if (!require(data.table)) {
 Introduction
 =================================
 
-Our understanding of shopping is changing rapidly. In the past years online shopping has become more and more omnipresent. E-commerce sales worldwide exhibit staggering growth rates of 20 percent annualy. However, the total sales are estimated to grow by [only 5 percent annualy](quote)^[quote]. 
+Our understanding of shopping is changing rapidly. In the past years online shopping has become more and more omnipresent. E-commerce sales worldwide exhibit staggering growth rates of 20 percent annualy. However, the total sales are estimated to grow by [only 5 percent annualy](https://www.emarketer.com/content/global-ecommerce-2019)^[https://www.emarketer.com/content/global-ecommerce-2019]. 
 It is especially obvious this year: Due to the COVID-19 policies applied everywhere, the world moves away from in-store purcases. This rapidly changing business environment, however, also yields its perils. Fraudsters and malware becomes more subtle and the need for physical interaction with the victim futher decreases. One strategy to cope with this development is machine learning.
 
 Therefore, this report will focus on machine learning algorithms to detect fraudulent credit card payments.
-The FBI(https://www.fbi.gov/scams-and-safety/common-scams-and-crimes/credit-card-fraud)^[https://www.fbi.gov/scams-and-safety/common-scams-and-crimes/credit-card-fraud] defines credit card fraud as *"the unauthorized use of a credit or debit card, or similar payment tool (ACH, EFT, recurring charge, etc.), to fraudulently obtain money or property".* This definition does not only include fraudulent e-commerce transactions but also physical unauthorized charges such as a family member using the card without permission.
+The [FBI](https://www.fbi.gov/scams-and-safety/common-scams-and-crimes/credit-card-fraud)^[https://www.fbi.gov/scams-and-safety/common-scams-and-crimes/credit-card-fraud] defines credit card fraud as *"the unauthorized use of a credit or debit card, or similar payment tool (ACH, EFT, recurring charge, etc.), to fraudulently obtain money or property".* This definition does not only include fraudulent e-commerce transactions but also physical unauthorized charges such as a family member using the card without permission.
 This report is part of the HarvardX [Data Science Series](https://www.edx.org/professional-certificate/harvardx-data-science)^[https://www.edx.org/professional-certificate/harvardx-data-science] capstone project. The R and R Markdown codes are also available on [my GitHub](https://github.com/mc-schaaf)^[https://github.com/mc-schaaf].
 
 We will use a public dataset provided by the Machine Learning Group at the Université Libre de Bruxelles (Brussels). The most recent version is 3.0, last updated 2018-03-23. The full dataset can be found on [kaggle](https://www.kaggle.com/mlg-ulb/creditcardfraud)^[https://www.kaggle.com/mlg-ulb/creditcardfraud] under a open database license. 
@@ -83,9 +83,11 @@ The performance of the best algorithm is then further discussed.
 Dataset Preparation
 ===================================
 
-```{r setup_data, include=FALSE}
+```{r setup_data, include=FALSE, cache=TRUE}
 # download data
-creditcard <- fread("C:\\Users\\morit\\Downloads\\310_23498_bundle_archive\\creditcard.csv", header = TRUE, sep = ",", dec = ".")
+dl <- tempfile() 
+download.file("https://www.openml.org/data/get_csv/1673544/phpKo8OWT", dl)
+creditcard <- data.table::fread(dl, header = TRUE, sep = ",", dec = ".")
 creditcard$Class <- factor(creditcard$Class, labels = c( "0" = "Legitimate", "1" = "Fraud"))
 ```
 
@@ -97,19 +99,20 @@ Feature Engineering and Data Splitting
 
 We will inspect the whole dataset before splitting into training, test and validation set. With this way of proceeding we can make sure we don't bias one of the subsets by accident. The Principal Components are named ``V1``, ``V2`` ... ``V28`` and all have mean 0, as expected. Their *eigenvalue* has been preserved as their variance, respectively:
 
-```{r FE_PCs}
+```{r FE_PCs, out.width="80%", fig.align = "center"}
 rafalib::mypar(2,1)
 lapply(creditcard[,-c(1,30,31)], var) %>% unlist() %>% plot(xlab = "PC", ylab = "Variance")
 abline(h = 1)
 title("Eigenvalue of Principal Components")
-lapply(creditcard[,-c(1,30,31)], mean) %>% unlist() %>% .[-c(1,30,31)] %>% plot(xlab = "PC", ylab = "Mean", ylim = c(-0.1,0.1))
+lapply(creditcard[,-c(1,30,31)], mean) %>% unlist() %>% .[-c(1,30,31)] %>% 
+  plot(xlab = "PC", ylab = "Mean", ylim = c(-0.1,0.1))
 abline(h = 0)
 title("Mean of Principal Components")
 ```
 
-Following the definition pf PCA, features ``V1`` up to ``V28`` are uncorrelated. Some small correlation with ``Time`` (first feature) and ``Amount`` (last feature) exists. However, this small a magnitude of covariance is not a problem for logistic regression or the other used machine learning algorithms.
+Following the definition of PCA, features ``V1`` up to ``V28`` are uncorrelated. Some small correlation with ``Time`` (first feature) and ``Amount`` (last feature) exists. However, this small a magnitude of covariance is not a problem for logistic regression or the other used machine learning algorithms.
 
-```{r FE_covariance_matrix}
+```{r FE_covariance_matrix, out.width="80%", fig.align = "center"}
 rafalib::mypar(1,1)
 rafalib::imagemat(abs(cor(creditcard[,-c(31)])), col = RColorBrewer::brewer.pal(7,"Greys"))
 title("Covariance Matrix of the Features")
@@ -117,14 +120,18 @@ title("Covariance Matrix of the Features")
 
 For ``Amount`` of Transaction we will transform the variable into a log10 variable. Thus, the influence of costly transactions (= outlieres) can be reduced, resulting in a higher performance of the algorithm. However, one could also decide against this approach as huge transactions should have a higher impact (= leverage) on the algorithm than small transactions. ``Time`` shows a bimodal distribution, as data was collected over a period of 48 hours and there are fewer activities over night. Here, a transformation reducing the time component to time of day will be implemented.
 
-```{r FE_AmountTime}
-creditcard %>% ggplot() + geom_histogram(aes(x = ifelse(Amount < 0.5, 0.5, Amount)), color = "black", fill = "grey", bins = 25) + 
+```{r FE_AmountTime, fig.show = "hold", out.width="50%"}
+creditcard %>% ggplot() + geom_histogram(aes(x = ifelse(Amount < 0.5, 0.5, Amount)), 
+                                         color = "black", fill = "grey", bins = 25) + 
   scale_x_continuous("Amount",trans = "log10") + 
-  ggtitle("Histogram of Amount of Transaction", subtitle = paste0("Range: ", range(creditcard$Amount)[1], " up to ", round(range(creditcard$Amount)[2]))) +
+  ggtitle("Histogram of Amount of Transaction", 
+          subtitle = paste0("Range: ", range(creditcard$Amount)[1], " up to ", 
+                            round(range(creditcard$Amount)[2]))) +
   theme_classic()
-creditcard %>% ggplot() + geom_histogram(aes(x = creditcard$Time/(60*60)), color = "black", fill = "grey", bins = 48) +  
-  scale_x_continuous("Time (in h)", breaks = 6*c(0:8)) +  ggtitle("Histogram of Time of Transaction") + 
-  theme_classic()
+creditcard %>% ggplot() + geom_histogram(aes(x = creditcard$Time/(60*60)), 
+                                         color = "black", fill = "grey", bins = 48) +  
+  scale_x_continuous("Time (in h)", breaks = 6*c(0:8)) +  
+  ggtitle("Histogram of Time of Transaction") + theme_classic()
 ```
 
 None of the variables shows extreme outliers or scarce values that have to be considered for splitting the data. We will use two thirds of the data for training the algorithm. The remaining third will be split into a leaderboard set and final validation set of equal size. Note that the resulting esimates can be quite wiggly, as only `r sum(creditcard$Class == "Fraud")` * 1/3 * 1/2  = `r sum(creditcard$Class == "Fraud") * 1/6` Fraud cases will be in each test set.
@@ -165,7 +172,7 @@ Data Visualization
 
 With the newly created training set we will take a closer look at the distribution of fraudulent cases in the different principal components. Therefore, we create a function that plots a scatterplot of $PC_i$ vs $PC_{i+1}$ with color denoting if the transaction was fraudulent. A second funtion will look at distribution estimates of the different principal components, color again denoting if the transaction was fraudulent
 
-```{r DV_scatter, results = "hide", out.width = "33%", eval = FALSE}
+```{r DV_scatter, results = "hide", out.width = "33%", dev = "png", cache = TRUE}
 # depending on the performance of your PC this might take some time!
 do_plot_scatter <- function(i) {
   data_train %>% ggplot(aes(x = data_train[,i], y = data_train[,i+1])) + 
@@ -174,12 +181,13 @@ do_plot_scatter <- function(i) {
     xlab(paste0(colnames(data_train)[i])) +
     ylab(paste0(colnames(data_train)[i+1])) +
     theme_bw() +
-    scale_color_manual(name = "Fraudulent?", values = c("black", "red"), labels = c("Legitimate" = "No", "Fraud" = "Yes"))
+    scale_color_manual(name = "Fraudulent?", values = c("black", "red"), 
+                       labels = c("Legitimate" = "No", "Fraud" = "Yes"))
 }
 sapply(seq(2, 28, by = 2), function(x) {plot(do_plot_scatter(x))})
 ```
 
-```{r DV_density, results = "hide", out.width = "25%", eval = FALSE}
+```{r DV_density, results = "hide", out.width = "25%"}
 do_plot_distribution <- function(i) {
   limits0 <- data_train[data_train$Class == 0, i] %>% quantile(c(0.25, 0.975))
   limits1 <- data_train[data_train$Class == 1, i] %>% quantile(c(0.25, 0.975))
@@ -189,8 +197,10 @@ do_plot_distribution <- function(i) {
     scale_x_continuous(paste0(colnames(data_train)[i])) +
     scale_y_continuous("Density", labels = NULL) +
     theme_bw() +
-    scale_color_manual(name = "Fraudulent?", values = c("black", "red"), labels = c("Legitimate" = "No", "Fraud" = "Yes")) +
-    scale_fill_manual(name = "Fraudulent?", values = c("black", "red"), labels = c("Legitimate" = "No", "Fraud" = "Yes")) +
+    scale_color_manual(name = "Fraudulent?", values = c("black", "red"), 
+                       labels = c("Legitimate" = "No", "Fraud" = "Yes")) +
+    scale_fill_manual(name = "Fraudulent?", values = c("black", "red"), 
+                      labels = c("Legitimate" = "No", "Fraud" = "Yes")) +
     coord_cartesian(xlim = limits)
 }
 sapply(2:(ncol(data_train)-2), function(x) {plot(do_plot_distribution(x))})
@@ -251,7 +261,8 @@ Baseline Measurements
 The most simple prediction one could make is always guessing the *a priori*, the Class with the highest propability:
 
 ```{r BM_apriori}
-predictions <- data.frame(guessing = sample(unique(data_train[,31]), prob = c(1, 0), size =  nrow(data_test), replace = TRUE))
+predictions <- data.frame(guessing = sample(unique(data_train[,31]), prob = c(1, 0), 
+                                            size =  nrow(data_test), replace = TRUE))
 caret::confusionMatrix(predictions$guessing, data_test$Class, positive = "Fraud")
 ```
 
@@ -261,10 +272,15 @@ We see that we can achieve an accuracy of 99.8% without any information on the t
 suppressWarnings(set.seed(42, sample.kind = "Rounding"))
 ps <- seq(0,1, by = 0.01)
 guessing <- map_df(ps, function(p){
-  y_hat <- sample(unique(data_train[,31]), prob = c(p, 1-p), size =  nrow(data_test), replace = TRUE)
-  SS <- caret::confusionMatrix(y_hat, data_test$Class, positive = "Fraud")$byClass[c("Sensitivity", "Specificity", "F1")]
-  AC <- caret::confusionMatrix(y_hat, data_test$Class, positive = "Fraud")$overall["Accuracy"]
-  list(method = "guessing", cutoff = p, sensitivity = SS[1], specificity = SS[2], F1 = SS[3], accuracy = AC[1])
+  y_hat <- sample(unique(data_train[,31]), prob = c(p, 1-p), 
+                  size =  nrow(data_test), replace = TRUE)
+  SS <- caret::confusionMatrix(y_hat, data_test$Class, 
+                               positive = "Fraud")$byClass[
+                                 c("Sensitivity", "Specificity", "F1")]
+  AC <- caret::confusionMatrix(y_hat, data_test$Class, 
+                               positive = "Fraud")$overall["Accuracy"]
+  list(method = "guessing", cutoff = p, sensitivity = SS[1], 
+       specificity = SS[2], F1 = SS[3], accuracy = AC[1])
 })
 guessing %>% ggplot(aes(x = cutoff)) + 
   geom_line(aes(y = sensitivity, color = "True Positive Rate")) + 
@@ -301,13 +317,19 @@ We see that the *guessing* method "wiggles" around the identity line (or no-info
 The most simple machine learning algorithm is logistic regression. By adding up the predictors times the estimated coefficients, one can quite easily create a probability for a given class. Therefore, this algorithm is highly interpretable and will serve as a benchmark. If more complex prediction methods cannot beat logistic regression, we will stick with it due to its high interpretability. We will, again, define a function that evaluates the performance of a probability estimate as we will use this throughout the whole report:
 
 ```{r BM_eval_define}
-# We will write a function that automatically evaluates the algorithm's probability esimations with different cutoff values
+# We will write a function that automatically evaluates the algorithm's 
+# probability esimations with different cutoff values
 do_eval <- function(data, method_name = "please specify", ps = seq(0,1, by = 0.001)){
   output <- map_df(ps, function(p){
-    y_hat <- ifelse(data < p, "Legitimate", "Fraud") %>% factor(levels = levels(data_train$Class))
-    SS <- caret::confusionMatrix(y_hat, data_test$Class, positive = "Fraud")$byClass[c("Sensitivity", "Specificity", "F1")]
-    AC <- caret::confusionMatrix(y_hat, data_test$Class, positive = "Fraud")$overall["Accuracy"]
-    list(method = method_name, cutoff = p, sensitivity = SS[1], specificity = SS[2], F1 = SS[3], accuracy = AC[1])
+    y_hat <- ifelse(data < p, "Legitimate", "Fraud") %>% 
+      factor(levels = levels(data_train$Class))
+    SS <- caret::confusionMatrix(y_hat, data_test$Class, 
+                                 positive = "Fraud")$byClass[
+                                   c("Sensitivity", "Specificity", "F1")]
+    AC <- caret::confusionMatrix(y_hat, data_test$Class, 
+                                 positive = "Fraud")$overall["Accuracy"]
+    list(method = method_name, cutoff = p, sensitivity = SS[1], 
+         specificity = SS[2], F1 = SS[3], accuracy = AC[1])
   })
   return(output)
 }
@@ -315,7 +337,7 @@ do_eval <- function(data, method_name = "please specify", ps = seq(0,1, by = 0.0
 
 When applying logistic regression, we see an huge increase of performance over the random guessing approach:
 
-```{r logistic}
+```{r logistic, cache=TRUE}
 suppressWarnings(set.seed(42, sample.kind = "Rounding"))
 fit_logistic <- glm(Class ~ ., data = data_train, family = "binomial")
 y_hat_p <- predict(fit_logistic, newdata = data_test, type = "response")
@@ -323,7 +345,7 @@ ROC_all <- rbind(guessing, do_eval(data = y_hat_p, method_name = "logistic"))
 do_ROC(ROC_all)
 ```
 
-Remember that the goal is to have perfect sensitivity for all values of specificity. This means a line that shoots straight into the upper right corner and stays at a sensitivity of 1 would be ideal. The logistic regression seems to be able to capture about 80% of the fraudulent transactions without generating large amounts of false positive cases. The last 20%, however, seem not detectable with ordinary logistic regression.
+Remember that the goal is to have perfect sensitivity for all values of specificity. This means a line that shoots straight into the upper left corner and stays at a sensitivity of 1 would be ideal. The logistic regression seems to be able to capture about 80% of the fraudulent transactions without generating large amounts of false positive cases. The last 20%, however, seem not detectable with ordinary logistic regression.
 
 
 Advanced Machine Learning Techniques 1: Linear Model Selection and Motivation for Sampling Techniques
@@ -342,7 +364,7 @@ ROC_all <- rbind(ROC_all, do_eval(data = y_hat_p, method_name = "logistic backwa
 do_ROC(ROC_all)
 ```
 
-```{r AM1_backwards_eval, echo=FALSE}
+```{r AM1_backwards_eval, echo=FALSE, cache=TRUE}
 # the above takes an eternity and cache invalidation is an classic error that slows down the workflow
 suppressWarnings(set.seed(42, sample.kind = "Rounding"))
 fit_logistic <- glm(Class ~ V1 + V4 + V6 + V8 + V9 + V10 + V12 + V13 + V14 + 
@@ -353,7 +375,7 @@ ROC_all <- rbind(ROC_all, do_eval(data = y_hat_p, method_name = "logistic backwa
 do_ROC(ROC_all)
 ```
 
-However, this approach still takes time as the training data consists of `r nrow(data_train)` observations, of which `r sum(data_train$Class == "Fraud")` are of high interest - the cases of fraud. When facing highly unbalanced datasets sampling techniques are often applied. One could generate cases of fraud (*oversampling*) or select only a subset of the legitimate transactions (*undersamling*). As we want to decrease processing time, the second option can be applied to our dataset in order to create a small dataset with an fraud prevalence of about 33%:
+However, this approach still takes time as the training data consists of `r nrow(data_train)` observations, of which `r sum(data_train$Class == "Fraud")` are of high interest - the cases of fraud. When facing highly unbalanced datasets sampling techniques are often applied. One could generate artificial cases of fraud (*oversampling*) or select only a subset of the legitimate transactions (*undersamling*). As we want to decrease processing time, the second option can be applied to our dataset in order to create a small dataset with a fraud prevalence of about 33%:
 
 ```{r AM1_undersampling}
 suppressWarnings(set.seed(42, sample.kind = "Rounding"))
@@ -362,7 +384,7 @@ data_train_under <- ROSE::ovun.sample(Class ~ ., data_train, method = "under", p
 
 When applying both logistic regressions again we can see that loosing those 95% of our data does not harm our prediction but actually increases the prediction performance: 
 
-```{r AM1_undersampling_applied, warning = FALSE, results = "hide"}
+```{r AM1_undersampling_applied, warning = FALSE, results = "hide", cache=TRUE}
 # plain vanilla logistic regression
 suppressWarnings(set.seed(42, sample.kind = "Rounding"))
 fit_logistic <- glm(Class ~ ., data = data_train_under, family = "binomial")
@@ -372,7 +394,8 @@ ROC_all <- rbind(ROC_all, do_eval(data = y_hat_p, method_name = "logistic unders
 # backwards selection logistic regression
 fit_logistic <- MASS::stepAIC(fit_logistic, direction = "backward")
 y_hat_p <- predict(fit_logistic, newdata = data_test, type = "response")
-ROC_all <- rbind(ROC_all, do_eval(data = y_hat_p, method_name = "logistic undersampling\n + backwards"))
+ROC_all <- rbind(ROC_all, do_eval(data = y_hat_p, 
+                                  method_name = "logistic undersampling\n + backwards"))
 do_ROC(ROC_all)
 ```
 
@@ -382,7 +405,7 @@ Advanced Machine Learning Techniques 2: PC-Regression, Ridge and Lasso
 
 Instead of deleting whole predictors one could also use a principal component regression. Here, one computes all $n$ Principal Components and use only the first $m < n$ PCs. One advantage over feature selection is that the number of possible models decreases to 30. As the PCs are ordered, only $n$ models have to be fitted. As we already deal with principal components, we can easily write our own principal component regression, utilizing the AIC as a model performance metric:
 
-```{r AM2_PCR, warning=FALSE, message=FALSE, results = "hide"}
+```{r AM2_PCR, warning=FALSE, message=FALSE, results = "hide", cache=TRUE}
 # Baseline Model contains Time and Amount
 X <- data_train_under %>% select(Time, Amount, Class)
 X_holdout <- data_train_under %>% select(-Time, -Amount, -Class)
@@ -430,7 +453,7 @@ plot.cv.glmnet=function(x,sign.lambda=1,...){
 
 ```
 
-```{r AM2_elasticnet, warning = FALSE, echo = FALSE}
+```{r AM2_elasticnet, warning = FALSE, echo = FALSE, cache=TRUE}
 # This package needs a special format
 # We will leave out the Time and Amount column and use only the PCs
 X <- model.matrix(Class~., data_train_under %>% select(-Time, -Amount))
@@ -460,7 +483,7 @@ rafalib::mypar(1,1)
 
 The first vertical line indicates the best performing lambda, the second line indicates 1 standard error more conservative than the best performing lambda. Whilst Ridge does not seem to improve the performance at all, Lasso may increase the performance a little bit with an optimal lambda of about `r round(exp(-6), digits = 3)`. It did, however, also set some coefficients to zero:
 
-```{r AM2_sparsity, echo = FALSE}
+```{r AM2_sparsity, echo = FALSE, out.width="66%", fig.align="center"}
 fit_lasso <- glmnet::glmnet(X, Y, alpha = 1, family = "binomial", lambda = cv_lasso$lambda.1se)
 fit_lasso$beta %>% plot(xlab = "Coefficient Index", ylab = "Coefficient Value", 
                          col = ifelse(fit_lasso$beta != 0, "black", "lightgrey"), type = "b", pch = 19)
@@ -468,7 +491,7 @@ fit_lasso$beta %>% plot(xlab = "Coefficient Index", ylab = "Coefficient Value",
 
 And again, the resulting model with fewer predictors still has a very good performance:
 
-```{r AM2_elasticnet_ROC, echo=FALSE}
+```{r AM2_elasticnet_ROC, echo=FALSE, cache=TRUE}
 # How is the performance of this sparse predictor matrix?
 X_new <- model.matrix(Class~., data_test %>% select(-Time, -Amount))
 y_hat_p <- predict(fit_lasso, newx = X_new, type = "response")
@@ -485,7 +508,7 @@ Advanced Machine Learning Techniques 3: Beyond linearity
 ------------------------------------------------------------------------------------------------------------------------
 
 Linear models have the advantage of being highly interpretable. On the other hand are machine learning algorithms that work miraculous - they yield good performance but you won't know how. They are not constrained by the prerequisites of classic regression analysis such as linear boundaries. We will compaire logistic regression to k-nearest-neighbours, random forests and regression trees. Therefore, we will use the ``caret`` package which allows for an coherent syntax.
-As our primary gaol is an conpairson and not very fine parameter tuning, we will only use 10-fold cross validation and a low-resoluting tune grid.
+As our primary goal is a compairson and not very fine parameter tuning, we will only use 10-fold cross validation and a low-resoluting tune grid.
 
 ```{r AM3_grids}
 # We will use some fast 10-fold CV to get first impressions of the algorithm performance
@@ -496,21 +519,23 @@ grid_plainvanilla_reg <- expand.grid(alpha = 0, lambda = 0) # this equals regula
 grid_glmnet <- expand.grid(alpha = seq(0, 1, by = 1/3), 
                            lambda = exp(seq(-10, -3, by = 0.5)))
 grid_knn <- expand.grid(k = seq(3, 51, by = 2))
-grid_GBM <- expand.grid(n.trees = c(5000),             # those values were selected directly with the gbm package
-                        interaction.depth = c(5),      # as this takes very long computationally with caret
-                        shrinkage = c(0.001),          # You don't have to cv as you can use the oob esimate for the performance
-                        n.minobsinnode = c(17))        # feel free to also try different other values yourself
+grid_GBM <- 
+  expand.grid(n.trees = c(5000),        # those values were selected directly with the 
+              interaction.depth = c(5), # gbm package as this takes very long with caret
+              shrinkage = c(0.001),     # You don't have to cross-validate as you can
+              n.minobsinnode = c(17))   # use the out of bag esimate for the performance
 grid_RF <- expand.grid(mtry = c(1, 3, 5, 7))
 ```
 
-Now we can apply various different machine learning algorithms with very little effort and compaire their results:
+With the tuning parameters set, we can apply various different machine learning algorithms with very little effort and compaire their results:
 
-```{r AM3_do_caret, cache=TRUE}
+```{r AM3_do_caret, cache=TRUE, out.width= "66%"}
 # Do Plain Vanilla Logistic Regression with caret package
 suppressWarnings(set.seed(999, sample.kind = "Rounding"))
 fit_plainvanilla_reg <- caret::train(Class ~., data = data_train_under, 
                                      method = "glmnet", tuneGrid = grid_plainvanilla_reg,
-                                     preProcess = c("scale", "center"), trControl = control_parameters)
+                                     preProcess = c("scale", "center"), 
+                                     trControl = control_parameters)
 p_Fraud <- predict(fit_plainvanilla_reg, newdata = data_test, type = "prob")[,2]
 ROC_caret <- do_eval(data = p_Fraud, method_name = "Plain Vanilla\nLogistic Regression")
 
@@ -518,10 +543,12 @@ ROC_caret <- do_eval(data = p_Fraud, method_name = "Plain Vanilla\nLogistic Regr
 # Do Elastic Net Logistic Regression with caret package
 suppressWarnings(set.seed(999, sample.kind = "Rounding"))
 fit_glmnet <- caret::train(Class ~., data = data_train_under, 
-                                     method = "glmnet", tuneGrid = grid_glmnet,
-                                     preProcess = c("scale", "center"), trControl = control_parameters)
+                           method = "glmnet", tuneGrid = grid_glmnet,
+                           preProcess = c("scale", "center"), 
+                           trControl = control_parameters)
 p_Fraud <- predict(fit_glmnet, newdata = data_test, type = "prob")[,2]
-ROC_caret <- rbind(ROC_caret, do_eval(data = p_Fraud, method_name = "Elastic Net\n Regression"))
+ROC_caret <- rbind(ROC_caret, do_eval(data = p_Fraud, 
+                                      method_name = "Elastic Net\n Regression"))
 
 ggplot(fit_glmnet, highlight = TRUE) + theme_classic() + scale_x_continuous(trans = "log10")
 
@@ -529,8 +556,8 @@ ggplot(fit_glmnet, highlight = TRUE) + theme_classic() + scale_x_continuous(tran
 # Do kNN with caret package
 suppressWarnings(set.seed(999, sample.kind = "Rounding"))
 fit_knn <- caret::train(Class ~., data = data_train_under, 
-                           method = "knn", tuneGrid = grid_knn,
-                           preProcess = c("scale", "center"), trControl = control_parameters)
+                        method = "knn", tuneGrid = grid_knn,
+                        preProcess = c("scale", "center"), trControl = control_parameters)
 p_Fraud <- predict(fit_knn, newdata = data_test, type = "prob")[,2]
 ROC_caret <- rbind(ROC_caret, do_eval(data = p_Fraud, method_name = "kNN"))
 
@@ -551,8 +578,10 @@ ggplot(fit_RF, highlight = TRUE) + theme_classic()
 # Do Boosting with caret package
 suppressWarnings(set.seed(999, sample.kind = "Rounding"))
 fit_gbm <- caret::train(Class ~., data = data_train_under, 
-                           method = "gbm", verbose = FALSE, distribution = "bernoulli", tuneGrid = grid_GBM,
-                           preProcess = c("scale", "center"), trControl = control_parameters)
+                        method = "gbm", verbose = FALSE, distribution = "bernoulli", 
+                        tuneGrid = grid_GBM,
+                        preProcess = c("scale", "center"), 
+                        trControl = control_parameters)
 p_Fraud <- predict(fit_gbm, newdata = data_test, type = "prob")[,2]
 ROC_caret <- rbind(ROC_caret, do_eval(data = p_Fraud, method_name = "Boosted Tree"))
 
@@ -561,15 +590,22 @@ ROC_caret <- rbind(ROC_caret, do_eval(data = p_Fraud, method_name = "Boosted Tre
 do_ROC(ROC_caret)
 ```
 
+We will focus on the performance for specificities > 0.99, as one would not want too many false-positive calls: 
 
+```{r closeup_ROC}
+do_ROC(ROC_caret) + coord_cartesian(xlim = c(0, 0.01), ylim = c(0.5, 1))
+```
+
+
+\newpage
 Discussion and Limitations
--------------------------------------------------------------------
+==========================================================
 
-Logistic regression served as a baseline model, as it is highly interpretable. It performed quite good for up to 80% sensitivity but then the performance did not further impurve. Lasso regression did not alter the performance much but made the model even more interpretable by creating a sparse coefficient matrix, meaning only fewer features had an influence on the prediction.
+Logistic regression served as a baseline model, as it is highly interpretable. It performed quite good for up to 80% sensitivity but then the performance did not further improve. Lasso regression did not alter the performance much but made the model even more interpretable by creating a sparse coefficient matrix, meaning only fewer features had an influence on the prediction.
 The kNN-algorithm does not seem applicable to this particular problem as it performs worse for almost all cutoff values. One could try kNN with fewer features (possibly the ones from the Lasso regression) and see if the performance increases as it softens the course of dimensionality.
 Boosted Classification Trees perform about the same as logistic regression. Only random forests appear to surpass the performance of logistic regression. Why classification trees do not benefit from boosting in this particular case is not completely understandable for me. One reason might be: the observable difference is only due to chance. Another explaination is that we overfit the data. Unlike random forest, boosting builds upon the residuals from previously generated models and can therefore be overfit. Maybe accuracy, which we used as a measure in cross-validation, was not optimal for tuning.
 
-In my opinion, the best algorithms for this particular problem are the Lasso and random forests. Whilst random forests provide the best prediction, the Lasso manages to reduce prediction to only a handful of relevant features. Thus, when explaining why a particular transaction was flagged as "Fraud", the Lasso can provide a answer. As we do not have the original features but only the principal components that stem from them, this advantage of the Lasso is lost for this dataset. Therefore, random forest is chosen to be the method that is applied onto the validation set.
+In my opinion, the best algorithms for this particular problem are the Lasso and random forests. Whilst random forests provide the best prediction, the Lasso manages to reduce prediction to only a handful of relevant features. Thus, when explaining why a particular transaction was flagged as "Fraud", the Lasso can provide a answer. As we do not have the original features but only the principal components that stem from them, this advantage of the Lasso is lost for this dataset. Also, for random forest, an inspection of the feature importance will provide no further insights. As interpretability is not achievable anyways, random forest is chosen to be the method that is applied onto the validation set.
 
 Two questions remain: 
 
@@ -591,10 +627,15 @@ for (i in c(1:25)){
   # do evaluation of prediction
   ps = seq(0,1, by = 0.001)
   tmp <- map_df(ps, function(p){
-    y_hat <- ifelse(p_Fraud <= p, "Legitimate", "Fraud") %>% factor(levels = levels(data_train$Class))
-    SS <- caret::confusionMatrix(y_hat, BT_data$Class, positive = "Fraud")$byClass[c("Sensitivity", "Specificity", "F1")]
-    AC <- caret::confusionMatrix(y_hat, BT_data$Class, positive = "Fraud")$overall["Accuracy"]
-    list(method = paste0("Bootstrap Sample ", i), cutoff = p, sensitivity = SS[1], specificity = SS[2], F1 = SS[3], accuracy = AC[1])
+    y_hat <- ifelse(p_Fraud <= p, "Legitimate", "Fraud") %>% 
+      factor(levels = levels(data_train$Class))
+    SS <- caret::confusionMatrix(y_hat, BT_data$Class, 
+                                 positive = "Fraud")$byClass[
+                                   c("Sensitivity", "Specificity", "F1")]
+    AC <- caret::confusionMatrix(y_hat, BT_data$Class, 
+                                 positive = "Fraud")$overall["Accuracy"]
+    list(method = paste0("Bootstrap Sample ", i), cutoff = p, sensitivity = SS[1], 
+         specificity = SS[2], F1 = SS[3], accuracy = AC[1])
   })
   # save the evaluation
   if (i == 1){
@@ -614,7 +655,7 @@ do_ROC(BT_results) + theme(legend.position = "none") + coord_equal() +
 ```
 
 
-the second question is a question of weighting up the costs of false-positive cases. This remains to be decided by the financial institution incorporating the fraud detection. 
+the second question is a question of weighting up the costs of false-positive versus false-negative cases. This remains to be decided by the financial institution incorporating the fraud detection. 
 
 
 
@@ -623,6 +664,6 @@ the second question is a question of weighting up the costs of false-positive ca
 \newpage
 Conclusion
 ===================================================================
-Our algorithm managed to flag quite many fraudulent transactions as Fraud. However, this came at a price of lower specifictiy and thus many mistakenly frozen accounts. In reality, cutoff values are chose such that even the most state of the art machine learning techniques only detect [2 out of every 3 dollars of attempted fraud](https://www.ukfinance.org.uk/system/files/Fraud%20The%20Facts%202019%20-%20FINAL%20ONLINE.pdf)^[https://www.ukfinance.org.uk/system/files/Fraud%20The%20Facts%202019%20-%20FINAL%20ONLINE.pdf]
+Our algorithm managed to flag quite many fraudulent transactions as Fraud. However, when wanting to detect more than 80% of the fraudulent transactions. this comes at the price of lower specifictiy and thus many mistakenly frozen accounts. In reality, cutoff values are chosen such that even the most state of the art machine learning techniques only detect [2 out of every 3 dollars of attempted fraud](https://www.ukfinance.org.uk/system/files/Fraud%20The%20Facts%202019%20-%20FINAL%20ONLINE.pdf)^[https://www.ukfinance.org.uk/system/files/Fraud%20The%20Facts%202019%20-%20FINAL%20ONLINE.pdf].
 Therefore, be aware of the [consumer information the FBI issues](https://www.fbi.gov/scams-and-safety/common-scams-and-crimes/credit-card-fraud)^[https://www.fbi.gov/scams-and-safety/common-scams-and-crimes/credit-card-fraud]. On the other hand, also notify your bank when your transaction behaviour is about to change. Their algorithms do not know whether you are on a exotic vacation or a fraudster is scamming you out of money on the cayman islands. 
 Although this report does not reach the performance of currently employed algorithms, it may help you gain an understanding of the algorithms and methods used to prevent fraud. This insight is going to help you minimize the risk of false-negative and false-positive errors. And for you this directly related to less lost money and fewer inconvenient situations on holiday.
